@@ -336,6 +336,8 @@ public:
         const std::function<void(websocket_close_status, const utility::string_t&, const std::error_code&)>&
             handler) = 0;
 
+    virtual void set_log_handler(const std::function<void(std::string)>&handler) = 0;
+
     const web::uri& uri() const { return m_uri; }
 
     void set_uri(const web::uri& uri) { m_uri = uri; }
@@ -583,6 +585,11 @@ public:
                                                     const std::error_code& error)>& handler)
     {
         m_client->set_close_handler(handler);
+    }
+
+    void set_log_handler(const std::function<void(std::string)>& handler)
+    {
+        m_client->set_log_handler(handler);
     }
 
     /// <summary>

@@ -142,8 +142,11 @@ public:
         _ASSERTE(m_state < DESTROYED);
         State localState;
         {
+            m_external_log_handler("destructor locking");
             std::lock_guard<std::mutex> lock(m_wspp_client_lock);
+            m_external_log_handler("destructor locked");
             localState = m_state;
+            m_external_log_handler("destructor unlocked");
         } // Unlock the mutex so connect/close can use it.
 
         // Now, what states could we be in?
@@ -428,7 +431,9 @@ public:
         m_state = CONNECTING;
         client.connect(con);
         {
+            m_external_log_handler("connect locking");
             std::lock_guard<std::mutex> lock(m_wspp_client_lock);
+            m_external_log_handler("connect locked");
             m_thread = std::thread([&client]() {
 #if defined(__ANDROID__)
                 crossplat::get_jvm_env();
@@ -446,6 +451,7 @@ public:
                 ERR_remove_thread_state(nullptr);
 #endif
             });
+            m_external_log_handler("connect unlocked");
         } // unlock
         return pplx::create_task(m_connect_tce);
     }
@@ -573,7 +579,9 @@ public:
 
         read_task
             .then([this_client, msg, sp_allocated, length]() {
+                this_client->m_external_log_handler("read locking");
                 std::lock_guard<std::mutex> lock(this_client->m_wspp_client_lock);
+                this_client->m_external_log_handler("read locked");
                 if (this_client->m_state > CONNECTED)
                 {
                     // The client has already been closed.
@@ -591,6 +599,7 @@ public:
                     this_client->send_msg_impl<websocketpp::config::asio_client>(
                         this_client, msg, sp_allocated, length, ec);
                 }
+                this_client->m_external_log_handler("read unlocked");
                 return ec;
             })
             .then([this_client, msg, is_buf, acquired, sp_allocated, length](
@@ -644,7 +653,9 @@ public:
     {
         websocketpp::lib::error_code ec;
         {
+            m_external_log_handler("close locking");
             std::lock_guard<std::mutex> lock(m_wspp_client_lock);
+            m_external_log_handler("close locked");
             if (m_state == CONNECTED)
             {
                 m_state = CLOSING;
@@ -657,6 +668,7 @@ public:
                     close_impl<websocketpp::config::asio_client>(status, reason, ec);
                 }
             }
+            m_external_log_handler("close unlocked");
         }
         return pplx::task<void>(m_close_tce);
     }
@@ -667,8 +679,11 @@ private:
     {
         // Only need to hold the lock when setting the state to closed.
         {
+            m_external_log_handler("shut down state locking");
             std::lock_guard<std::mutex> lock(m_wspp_client_lock);
+            m_external_log_handler("shut down state locked");
             m_state = CLOSED;
+            m_external_log_handler("shut down state unlocked");
         }
 
         auto& client = m_client->client<WebsocketConfigType>();
@@ -681,11 +696,14 @@ private:
         // Can't join thread directly since it is the current thread.
         pplx::create_task([] {}).then([this, connecting, ec, closeCode, reason]() mutable {
             {
+                m_external_log_handler("shut down task locking");
                 std::lock_guard<std::mutex> lock(m_wspp_client_lock);
+                m_external_log_handler("shut down task locked");
                 if (m_thread.joinable())
                 {
                     m_thread.join();
                 }
+                m_external_log_handler("shut down task unlocked");
             } // unlock
 
             if (connecting)
@@ -701,6 +719,8 @@ private:
             // Making a local copy of the TCE prevents it from being destroyed along with "this"
             auto tceref = m_close_tce;
             tceref.set();
+
+            m_external_log_handler("shut down task completed");
         });
     }
 
@@ -759,6 +779,11 @@ private:
         m_external_close_handler = handler;
     }
 
+    void set_log_handler(const std::function<void(std::string)>& handler)
+    {
+        m_external_log_handler = handler;
+    }
+
     std::thread m_thread;
 
     // Perform type erasure to set the websocketpp client in use at runtime
@@ -813,6 +838,7 @@ private:
     std::function<void(websocket_incoming_message)> m_external_message_handler;
     std::function<void(websocket_close_status, const utility::string_t&, const std::error_code&)>
         m_external_close_handler;
+    std::function<void(std::string)> m_external_log_handler;
 
     // Used to track if any of the OpenSSL server certificate verifications
     // failed. This can safely be tracked at the client level since connections

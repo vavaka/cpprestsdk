@@ -418,6 +418,11 @@ public:
         m_external_close_handler = handler;
     }
 
+    void set_log_handler(const std::function<void(std::string)>& handler)
+    {
+        m_external_log_handler = handler;
+    }
+
 private:
     // WinRT MessageWebSocket object
     Windows::Networking::Sockets::MessageWebSocket ^ m_msg_websocket;
@@ -434,6 +439,7 @@ private:
     std::function<void(websocket_incoming_message)> m_external_message_handler;
     std::function<void(websocket_close_status, const utility::string_t&, const std::error_code&)>
         m_external_close_handler;
+    std::function<void(std::string)> m_external_log_handler;
 
     // Queue to track pending sends
     outgoing_msg_queue m_out_queue;
