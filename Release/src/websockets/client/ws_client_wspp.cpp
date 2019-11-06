@@ -142,11 +142,8 @@ public:
         _ASSERTE(m_state < DESTROYED);
         State localState;
         {
-            m_external_log_handler("destructor locking");
             std::lock_guard<std::mutex> lock(m_wspp_client_lock);
-            m_external_log_handler("destructor locked");
             localState = m_state;
-            m_external_log_handler("destructor unlocked");
         } // Unlock the mutex so connect/close can use it.
 
         // Now, what states could we be in?
@@ -431,9 +428,7 @@ public:
         m_state = CONNECTING;
         client.connect(con);
         {
-            m_external_log_handler("connect locking");
             std::lock_guard<std::mutex> lock(m_wspp_client_lock);
-            m_external_log_handler("connect locked");
             m_thread = std::thread([&client]() {
 #if defined(__ANDROID__)
                 crossplat::get_jvm_env();
@@ -451,7 +446,6 @@ public:
                 ERR_remove_thread_state(nullptr);
 #endif
             });
-            m_external_log_handler("connect unlocked");
         } // unlock
         return pplx::create_task(m_connect_tce);
     }
@@ -502,6 +496,19 @@ public:
         auto& is_buf = msg.m_body;
         auto length = msg.m_length;
 
+        {
+            concurrency::streams::container_buffer<std::vector<uint8_t>> body_data;
+
+            auto is = is_buf.create_istream();
+            is.read_to_end(body_data).wait();
+
+            std::vector<uint8_t> body_chars = body_data.collection();
+            std::string body_string(body_chars.begin(), body_chars.end());
+            m_external_log_handler("SENDING: " + body_string);
+
+            msg.m_body = concurrency::streams::container_buffer<std::string>(std::move(body_string));
+        }
+
         if (length == SIZE_MAX)
         {
             // This indicates we should determine the length automatically.
@@ -511,6 +518,7 @@ public:
                 auto buf_sz = is_buf.size();
                 if (buf_sz >= SIZE_MAX)
                 {
+                    m_external_log_handler("SEND_ERROR_1: Cannot send messages larger than SIZE_MAX.");
                     msg.signal_body_sent(
                         std::make_exception_ptr(websocket_exception("Cannot send messages larger than SIZE_MAX.")));
                     return;
@@ -531,7 +539,20 @@ public:
                     }
                     catch (...)
                     {
-                        msg.signal_body_sent(std::current_exception());
+                        std::exception_ptr eptr =  std::current_exception();
+
+                        this_client->m_external_log_handler("SEND_ERROR_2: Unexpected exception");
+                        try
+                        {
+                            std::rethrow_exception(eptr);
+                        }
+                        catch (const std::exception& e)
+                        {
+                            std::cerr << e.what() << std::endl;
+                            this_client->m_external_log_handler(e.what());
+                        }
+
+                        msg.signal_body_sent(eptr);
                     }
                 });
                 // We have postponed the call to send_msg() until after the data is buffered.
@@ -579,9 +600,7 @@ public:
 
         read_task
             .then([this_client, msg, sp_allocated, length]() {
-                this_client->m_external_log_handler("read locking");
                 std::lock_guard<std::mutex> lock(this_client->m_wspp_client_lock);
-                this_client->m_external_log_handler("read locked");
                 if (this_client->m_state > CONNECTED)
                 {
                     // The client has already been closed.
@@ -599,7 +618,6 @@ public:
                     this_client->send_msg_impl<websocketpp::config::asio_client>(
                         this_client, msg, sp_allocated, length, ec);
                 }
-                this_client->m_external_log_handler("read unlocked");
                 return ec;
             })
             .then([this_client, msg, is_buf, acquired, sp_allocated, length](
@@ -627,6 +645,18 @@ public:
                 // Set the send_task_completion_event after calling release.
                 if (eptr)
                 {
+                    this_client->m_external_log_handler("SEND_ERROR_3: Unexpected exception");
+                    try
+                    {
+                        std::rethrow_exception(eptr);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << e.what() << std::endl;
+                        std::string reason = e.what();
+                        this_client->m_external_log_handler("SEND_ERROR_3: " + reason);
+                    }
+
                     msg.signal_body_sent(eptr);
                 }
                 else
@@ -653,9 +683,7 @@ public:
     {
         websocketpp::lib::error_code ec;
         {
-            m_external_log_handler("close locking");
             std::lock_guard<std::mutex> lock(m_wspp_client_lock);
-            m_external_log_handler("close locked");
             if (m_state == CONNECTED)
             {
                 m_state = CLOSING;
@@ -668,7 +696,6 @@ public:
                     close_impl<websocketpp::config::asio_client>(status, reason, ec);
                 }
             }
-            m_external_log_handler("close unlocked");
         }
         return pplx::task<void>(m_close_tce);
     }
@@ -679,11 +706,8 @@ private:
     {
         // Only need to hold the lock when setting the state to closed.
         {
-            m_external_log_handler("shut down state locking");
             std::lock_guard<std::mutex> lock(m_wspp_client_lock);
-            m_external_log_handler("shut down state locked");
             m_state = CLOSED;
-            m_external_log_handler("shut down state unlocked");
         }
 
         auto& client = m_client->client<WebsocketConfigType>();
@@ -696,14 +720,11 @@ private:
         // Can't join thread directly since it is the current thread.
         pplx::create_task([] {}).then([this, connecting, ec, closeCode, reason]() mutable {
             {
-                m_external_log_handler("shut down task locking");
                 std::lock_guard<std::mutex> lock(m_wspp_client_lock);
-                m_external_log_handler("shut down task locked");
                 if (m_thread.joinable())
                 {
                     m_thread.join();
                 }
-                m_external_log_handler("shut down task unlocked");
             } // unlock
 
             if (connecting)
@@ -719,8 +740,6 @@ private:
             // Making a local copy of the TCE prevents it from being destroyed along with "this"
             auto tceref = m_close_tce;
             tceref.set();
-
-            m_external_log_handler("shut down task completed");
         });
     }
 

@@ -193,9 +193,9 @@ class task<void>;
 // default to only one frame.
 #ifndef PPLX_TASK_SAVE_FRAME_COUNT
 #ifdef _DEBUG
-#define PPLX_TASK_SAVE_FRAME_COUNT 10
+#define PPLX_TASK_SAVE_FRAME_COUNT 20
 #else
-#define PPLX_TASK_SAVE_FRAME_COUNT 1
+#define PPLX_TASK_SAVE_FRAME_COUNT 20
 #endif
 #endif
 
