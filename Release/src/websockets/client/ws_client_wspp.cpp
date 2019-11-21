@@ -113,6 +113,8 @@ static std::string build_error_msg(const std::error_code& ec, const std::string&
 
 static utility::string_t g_subProtocolHeader(_XPLATSTR("Sec-WebSocket-Protocol"));
 
+static int sent_count = 0;
+
 class wspp_callback_client : public websocket_client_callback_impl,
                              public std::enable_shared_from_this<wspp_callback_client>
 {
@@ -600,6 +602,10 @@ public:
 
         read_task
             .then([this_client, msg, sp_allocated, length]() {
+                if (sent_count++` > 3) {
+                    throw websocket_exception("My custom exception");
+                }
+
                 std::lock_guard<std::mutex> lock(this_client->m_wspp_client_lock);
                 if (this_client->m_state > CONNECTED)
                 {
